@@ -185,6 +185,17 @@ const Index: React.FC = () => {
             </div>
           ))}
         </section>
+
+        {/* Worker Portal Link */}
+        <section className="mt-6">
+          <Button
+            variant="outline"
+            className="w-full h-14 font-bold border-2 border-dashed"
+            onClick={() => navigate("/worker/login")}
+          >
+            Are you a professional? Join as a Worker →
+          </Button>
+        </section>
       </main>
 
       <BottomNav />
