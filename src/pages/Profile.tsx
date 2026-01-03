@@ -14,6 +14,9 @@ import {
 } from "lucide-react";
 import BottomNav from "@/components/layout/BottomNav";
 import { useBooking } from "@/context/BookingContext";
+import { useNavigate } from "react-router-dom";
+import { useAuth } from "@/context/AuthContext";
+import { useToast } from "@/components/ui/use-toast";
 import { cn } from "@/lib/utils";
 
 const menuItems = [
@@ -29,6 +32,9 @@ const menuItems = [
 const Profile: React.FC = () => {
   const { bookings } = useBooking();
   const activeBookingsCount = bookings.filter(b => b.status !== "completed").length;
+  const { isLoggedIn, user, logout } = useAuth();
+  const { toast } = useToast();
+  const navigate = useNavigate();
 
   return (
     <div className="min-h-screen bg-background pb-24">
@@ -40,8 +46,8 @@ const Profile: React.FC = () => {
               <User className="w-8 h-8 text-primary" />
             </div>
             <div>
-              <h1 className="text-xl font-bold text-foreground">John Doe</h1>
-              <p className="text-sm text-muted-foreground">+91 98765 43210</p>
+              <h1 className="text-xl font-bold text-foreground">{isLoggedIn ? user?.name : "Guest"}</h1>
+              <p className="text-sm text-muted-foreground">{isLoggedIn ? user?.phone : "Sign in to view account"}</p>
             </div>
           </div>
         </div>
@@ -78,19 +84,39 @@ const Profile: React.FC = () => {
           })}
         </div>
 
-        {/* Logout */}
-        <button
-          className={cn(
-            "w-full flex items-center gap-4 px-4 py-4 mt-4",
-            "bg-card rounded-2xl border border-border",
-            "hover:bg-secondary/50 transition-colors"
-          )}
-        >
-          <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center">
-            <LogOut className="w-5 h-5 text-destructive" />
-          </div>
-          <span className="flex-1 font-medium text-destructive text-left">Log Out</span>
-        </button>
+        {/* Auth Action */}
+        {isLoggedIn ? (
+          <button
+            onClick={() => {
+              logout();
+              toast({ title: "Signed out", description: "You have been signed out." });
+            }}
+            className={cn(
+              "w-full flex items-center gap-4 px-4 py-4 mt-4",
+              "bg-card rounded-2xl border border-border",
+              "hover:bg-secondary/50 transition-colors"
+            )}
+          >
+            <div className="w-10 h-10 rounded-xl bg-destructive/10 flex items-center justify-center">
+              <LogOut className="w-5 h-5 text-destructive" />
+            </div>
+            <span className="flex-1 font-medium text-destructive text-left">Log Out</span>
+          </button>
+        ) : (
+          <button
+            onClick={() => navigate("/login")}
+            className={cn(
+              "w-full flex items-center gap-4 px-4 py-4 mt-4",
+              "bg-card rounded-2xl border border-border",
+              "hover:bg-secondary/50 transition-colors"
+            )}
+          >
+            <div className="w-10 h-10 rounded-xl bg-primary/10 flex items-center justify-center">
+              <LogOut className="w-5 h-5 text-primary" />
+            </div>
+            <span className="flex-1 font-medium text-primary text-left">Sign In</span>
+          </button>
+        )}
       </main>
 
       <BottomNav />
