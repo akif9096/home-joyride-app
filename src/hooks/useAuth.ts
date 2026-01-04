@@ -4,7 +4,7 @@ import { supabase } from "@/integrations/supabase/client";
 
 export type UserRole = "admin" | "customer" | "worker";
 
-export const useAuth = () => {
+export const useSupabaseAuth = () => {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [roles, setRoles] = useState<UserRole[]>([]);
@@ -75,3 +75,5 @@ export const useAuth = () => {
     signOut,
   };
 };
+
+export default useSupabaseAuth;

@@ -1,5 +1,6 @@
 import React from "react";
 import { Home, Briefcase, MapPin, Check, Plus } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { Address } from "@/data/servicesData";
 import { cn } from "@/lib/utils";
 
@@ -14,6 +15,7 @@ const AddressSelector: React.FC<AddressSelectorProps> = ({
   selectedAddress,
   onSelect,
 }) => {
+  const navigate = useNavigate();
   const getIcon = (type: Address["type"]) => {
     switch (type) {
       case "home":
@@ -91,6 +93,7 @@ const AddressSelector: React.FC<AddressSelectorProps> = ({
 
       {/* Add New Address */}
       <button
+        onClick={() => navigate("/addresses")}
         className={cn(
           "w-full flex items-center justify-center gap-2 p-4 rounded-xl",
           "border border-dashed border-muted-foreground/30",

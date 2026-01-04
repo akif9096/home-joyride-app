@@ -16,7 +16,7 @@ import { useBooking } from "@/context/BookingContext";
 import { useOrders } from "@/hooks/useOrders";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
-import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/context/AuthContext";
 
 type BookingStep = "closed" | "service-type" | "datetime" | "address" | "summary";
 
@@ -43,20 +43,7 @@ const Index: React.FC = () => {
   const [bookingStep, setBookingStep] = useState<BookingStep>("closed");
   const [activeOrder, setActiveOrder] = useState<any>(null);
   const [showPaymentModal, setShowPaymentModal] = useState(false);
-  const [user, setUser] = useState<any>(null);
-
-  useEffect(() => {
-    supabase.auth.getUser().then(({ data: { user } }) => {
-      setUser(user);
-    });
-
-    // Listen for auth changes
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
-      setUser(session?.user ?? null);
-    });
-
-    return () => subscription.unsubscribe();
-  }, []);
+  const { isLoggedIn } = useAuth();
 
   // Check for active orders that need payment
   useEffect(() => {
@@ -78,7 +65,7 @@ const Index: React.FC = () => {
   }, [orders]);
 
   const handleServiceClick = (service: Service) => {
-    if (!user) {
+    if (!isLoggedIn) {
       navigate("/auth");
       return;
     }
@@ -200,7 +187,7 @@ const Index: React.FC = () => {
               <span className="text-sm font-medium opacity-90">Home Services</span>
             </div>
             <h1 className="text-2xl font-bold mb-2">
-              {user ? `Welcome back!` : "Book Expert Services"}
+              {isLoggedIn ? `Welcome back!` : "Book Expert Services"}
             </h1>
             <p className="text-sm opacity-90 mb-4">
               Expert professionals at your doorstep. Book trusted services in minutes.
@@ -222,7 +209,7 @@ const Index: React.FC = () => {
         </section>
 
         {/* Login prompt for non-authenticated users */}
-        {!user && (
+        {!isLoggedIn && (
           <section className="bg-card border border-border rounded-xl p-4">
             <p className="text-sm text-muted-foreground mb-3">
               Sign in to book services and track your orders

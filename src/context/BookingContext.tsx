@@ -37,6 +37,8 @@ interface BookingContextType {
   // Helpers
   resetBookingFlow: () => void;
   addresses: Address[];
+  addAddress?: (a: Omit<Address, "id">) => void;
+  setDefaultAddress?: (id: string) => void;
   getTotalAmount: () => number;
 }
 
@@ -46,6 +48,13 @@ export const BookingProvider: React.FC<{ children: ReactNode }> = ({ children })
   const [selectedService, setSelectedService] = useState<Service | null>(null);
   const [selectedServiceType, setSelectedServiceType] = useState<ServiceType | null>(null);
   const [selectedAddress, setSelectedAddress] = useState<Address | null>(savedAddresses[0]);
+  const [addressesState, setAddressesState] = useState<Address[]>(() => {
+    try {
+      const raw = localStorage.getItem("saved_addresses");
+      if (raw) return JSON.parse(raw) as Address[];
+    } catch {}
+    return savedAddresses;
+  });
   const [selectedDate, setSelectedDate] = useState<Date | null>(null);
   const [selectedTimeSlot, setSelectedTimeSlot] = useState<TimeSlot | null>(null);
   const [paymentMethod, setPaymentMethod] = useState<"cod" | "online">("cod");
@@ -64,6 +73,28 @@ export const BookingProvider: React.FC<{ children: ReactNode }> = ({ children })
     setSelectedDate(null);
     setSelectedTimeSlot(null);
     setPaymentMethod("cod");
+  };
+
+  const persistAddresses = (addrs: Address[]) => {
+    try {
+      localStorage.setItem("saved_addresses", JSON.stringify(addrs));
+    } catch {}
+  };
+
+  const addAddress = (a: Omit<Address, "id">) => {
+    const newAddress: Address = { ...a, id: String(Date.now()) };
+    const next = [newAddress, ...addressesState.map(x => ({ ...x, isDefault: false }))];
+    setAddressesState(next);
+    persistAddresses(next);
+    setSelectedAddress(newAddress);
+  };
+
+  const setDefaultAddress = (id: string) => {
+    const next = addressesState.map(a => ({ ...a, isDefault: a.id === id }));
+    setAddressesState(next);
+    persistAddresses(next);
+    const found = next.find(a => a.id === id) || null;
+    setSelectedAddress(found);
   };
 
   const createBooking = (): Booking => {
@@ -125,7 +156,9 @@ export const BookingProvider: React.FC<{ children: ReactNode }> = ({ children })
         updateBookingStatus,
         setCurrentBooking,
         resetBookingFlow,
-        addresses: savedAddresses,
+        addresses: addressesState,
+        addAddress,
+        setDefaultAddress,
         getTotalAmount,
       }}
     >
