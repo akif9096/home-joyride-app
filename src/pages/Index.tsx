@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { ArrowRight, Sparkles, Clock, Shield, Star } from "lucide-react";
 import Header from "@/components/layout/Header";
@@ -9,11 +9,14 @@ import ServiceTypeSelector from "@/components/services/ServiceTypeSelector";
 import DateTimeSelector from "@/components/services/DateTimeSelector";
 import AddressSelector from "@/components/services/AddressSelector";
 import BookingSummary from "@/components/services/BookingSummary";
-import BookingStatusTracker from "@/components/services/BookingStatusTracker";
+import OrderStatusTracker from "@/components/services/OrderStatusTracker";
+import PaymentModal from "@/components/customer/PaymentModal";
 import { services, Service } from "@/data/servicesData";
 import { useBooking } from "@/context/BookingContext";
+import { useOrders } from "@/hooks/useOrders";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import { supabase } from "@/integrations/supabase/client";
 
 type BookingStep = "closed" | "service-type" | "datetime" | "address" | "summary";
 
@@ -30,17 +33,55 @@ const Index: React.FC = () => {
     setSelectedAddress,
     setSelectedDate,
     setSelectedTimeSlot,
-    createBooking,
-    currentBooking,
-    setCurrentBooking,
     addresses,
     resetBookingFlow,
+    getTotalAmount,
   } = useBooking();
 
+  const { orders, createOrder } = useOrders();
+
   const [bookingStep, setBookingStep] = useState<BookingStep>("closed");
-  const [showStatusTracker, setShowStatusTracker] = useState(false);
+  const [activeOrder, setActiveOrder] = useState<any>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
+  const [user, setUser] = useState<any>(null);
+
+  useEffect(() => {
+    supabase.auth.getUser().then(({ data: { user } }) => {
+      setUser(user);
+    });
+
+    // Listen for auth changes
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
+      setUser(session?.user ?? null);
+    });
+
+    return () => subscription.unsubscribe();
+  }, []);
+
+  // Check for active orders that need payment
+  useEffect(() => {
+    const assignedOrder = orders.find(
+      (o) => o.status === "assigned" && !o.worker_id
+    );
+    if (assignedOrder) {
+      setActiveOrder(assignedOrder);
+      setShowPaymentModal(true);
+    }
+
+    // Check for in-progress or assigned orders to show tracker
+    const trackingOrder = orders.find((o) =>
+      ["searching", "assigned", "in_progress"].includes(o.status)
+    );
+    if (trackingOrder) {
+      setActiveOrder(trackingOrder);
+    }
+  }, [orders]);
 
   const handleServiceClick = (service: Service) => {
+    if (!user) {
+      navigate("/auth");
+      return;
+    }
     setSelectedService(service);
     setBookingStep("service-type");
   };
@@ -59,21 +100,40 @@ const Index: React.FC = () => {
     }
   };
 
-  const handleConfirmBooking = () => {
-    const booking = createBooking();
-    setBookingStep("closed");
-    setShowStatusTracker(true);
-    resetBookingFlow();
+  const handleConfirmBooking = async () => {
+    if (!selectedService || !selectedServiceType || !selectedDate || !selectedTimeSlot || !selectedAddress) {
+      return;
+    }
+
+    // Map service ID to category
+    const categoryMap: Record<string, string> = {
+      plumber: "plumber",
+      carpenter: "carpenter",
+      painter: "painter",
+      electrician: "electrician",
+    };
+
+    const order = await createOrder({
+      service_name: selectedService.name,
+      service_type: selectedServiceType.name,
+      service_icon: selectedService.id,
+      category: categoryMap[selectedService.id] || "plumber",
+      address_text: selectedAddress.address,
+      scheduled_date: selectedDate.toISOString().split("T")[0],
+      scheduled_time: selectedTimeSlot.label,
+      total_amount: getTotalAmount(),
+    });
+
+    if (order) {
+      setActiveOrder(order);
+      setBookingStep("closed");
+      resetBookingFlow();
+    }
   };
 
   const handleCloseSheet = () => {
     setBookingStep("closed");
     resetBookingFlow();
-  };
-
-  const handleBackFromStatus = () => {
-    setShowStatusTracker(false);
-    setCurrentBooking(null);
   };
 
   const isNextEnabled = () => {
@@ -104,9 +164,27 @@ const Index: React.FC = () => {
     }
   };
 
-  // Show status tracker if there's an active booking
-  if (showStatusTracker && currentBooking) {
-    return <BookingStatusTracker booking={currentBooking} onClose={handleBackFromStatus} />;
+  // Show order status tracker if there's an active order being searched/assigned
+  if (activeOrder && ["searching", "assigned", "in_progress"].includes(activeOrder.status)) {
+    return (
+      <>
+        <OrderStatusTracker
+          order={activeOrder}
+          onClose={() => setActiveOrder(null)}
+        />
+        {activeOrder.status === "assigned" && (
+          <PaymentModal
+            isOpen={showPaymentModal}
+            onClose={() => setShowPaymentModal(false)}
+            orderId={activeOrder.id}
+            amount={Number(activeOrder.total_amount)}
+            onPaymentComplete={() => {
+              setShowPaymentModal(false);
+            }}
+          />
+        )}
+      </>
+    );
   }
 
   return (
@@ -119,9 +197,11 @@ const Index: React.FC = () => {
           <div className="relative z-10">
             <div className="flex items-center gap-2 mb-3">
               <Sparkles className="w-5 h-5" />
-              <span className="text-sm font-medium opacity-90">New Feature</span>
+              <span className="text-sm font-medium opacity-90">Home Services</span>
             </div>
-            <h1 className="text-2xl font-bold mb-2">Home Services</h1>
+            <h1 className="text-2xl font-bold mb-2">
+              {user ? `Welcome back!` : "Book Expert Services"}
+            </h1>
             <p className="text-sm opacity-90 mb-4">
               Expert professionals at your doorstep. Book trusted services in minutes.
             </p>
@@ -140,6 +220,18 @@ const Index: React.FC = () => {
           <div className="absolute -right-8 -top-8 w-32 h-32 rounded-full bg-primary-foreground/10" />
           <div className="absolute -right-4 bottom-0 w-20 h-20 rounded-full bg-primary-foreground/5" />
         </section>
+
+        {/* Login prompt for non-authenticated users */}
+        {!user && (
+          <section className="bg-card border border-border rounded-xl p-4">
+            <p className="text-sm text-muted-foreground mb-3">
+              Sign in to book services and track your orders
+            </p>
+            <Button className="w-full" onClick={() => navigate("/auth")}>
+              Sign In / Sign Up
+            </Button>
+          </section>
+        )}
 
         {/* Services Grid */}
         <section>
@@ -191,7 +283,7 @@ const Index: React.FC = () => {
           <Button
             variant="outline"
             className="w-full h-14 font-bold border-2 border-dashed"
-            onClick={() => navigate("/worker/login")}
+            onClick={() => navigate("/auth")}
           >
             Are you a professional? Join as a Worker →
           </Button>

@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react";
 import { useNavigate, useParams } from "react-router-dom";
-import { useWorker } from "@/context/WorkerContext";
+import { supabase } from "@/integrations/supabase/client";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -8,43 +8,157 @@ import { Label } from "@/components/ui/label";
 import { ArrowLeft, CheckCircle2, AlertCircle, PartyPopper } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 
+type Order = {
+  id: string;
+  service_name: string;
+  service_type: string;
+  total_amount: number;
+  otp: string | null;
+  customer_id: string;
+  profiles?: { full_name: string };
+};
+
 const CompleteJob = () => {
   const { jobId } = useParams();
   const navigate = useNavigate();
-  const { isLoggedIn, activeJob, completeJob } = useWorker();
   const { toast } = useToast();
+  const [order, setOrder] = useState<Order | null>(null);
   const [otp, setOtp] = useState("");
   const [error, setError] = useState("");
   const [isCompleted, setIsCompleted] = useState(false);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!isLoggedIn) {
-      navigate("/worker/login");
-    }
-    if (!activeJob || activeJob.id !== jobId) {
+    fetchOrder();
+  }, [jobId]);
+
+  const fetchOrder = async () => {
+    if (!jobId) {
       navigate("/worker");
+      return;
     }
-  }, [isLoggedIn, activeJob, jobId, navigate]);
 
-  if (!activeJob) return null;
+    const { data: { user } } = await supabase.auth.getUser();
+    if (!user) {
+      navigate("/auth");
+      return;
+    }
 
-  const handleComplete = () => {
+    // Get worker
+    const { data: worker } = await supabase
+      .from("workers")
+      .select("id")
+      .eq("user_id", user.id)
+      .maybeSingle();
+
+    if (!worker) {
+      navigate("/worker");
+      return;
+    }
+
+    // Get order
+    const { data: orderData } = await supabase
+      .from("orders")
+      .select("*")
+      .eq("id", jobId)
+      .eq("worker_id", worker.id)
+      .maybeSingle();
+
+    if (!orderData) {
+      toast({
+        title: "Order not found",
+        description: "This order does not exist or is not assigned to you",
+        variant: "destructive",
+      });
+      navigate("/worker");
+      return;
+    }
+
+    // Get customer name
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("full_name")
+      .eq("id", orderData.customer_id)
+      .maybeSingle();
+
+    setOrder({ ...orderData, profiles: profile || undefined } as Order);
+    setLoading(false);
+  };
+
+  const handleComplete = async () => {
+    if (!order) return;
+
     if (otp.length !== 4) {
       setError("Please enter the 4-digit OTP");
       return;
     }
 
-    const success = completeJob(activeJob.id, otp);
-    if (success) {
-      setIsCompleted(true);
-      toast({
-        title: "Job Completed! 🎉",
-        description: `You earned ₹${activeJob.workerEarnings} for this job.`,
-      });
-    } else {
+    if (otp !== order.otp) {
       setError("Invalid OTP. Please try again.");
+      return;
     }
+
+    // Update order status to completed
+    const { error: updateError } = await supabase
+      .from("orders")
+      .update({ status: "completed" })
+      .eq("id", order.id);
+
+    if (updateError) {
+      toast({
+        title: "Error",
+        description: updateError.message,
+        variant: "destructive",
+      });
+      return;
+    }
+
+    // Update transaction if exists (mark cash as paid)
+    await supabase
+      .from("transactions")
+      .update({ 
+        payment_status: "paid",
+        paid_at: new Date().toISOString()
+      })
+      .eq("order_id", order.id)
+      .eq("payment_method", "cash");
+
+    // Update worker stats
+    const { data: { user } } = await supabase.auth.getUser();
+    if (user) {
+      const { data: worker } = await supabase
+        .from("workers")
+        .select("total_jobs")
+        .eq("user_id", user.id)
+        .maybeSingle();
+
+      if (worker) {
+        await supabase
+          .from("workers")
+          .update({ total_jobs: (worker.total_jobs || 0) + 1 })
+          .eq("user_id", user.id);
+      }
+    }
+
+    setIsCompleted(true);
+    toast({
+      title: "Job Completed! 🎉",
+      description: `You earned ₹${Number(order.total_amount).toLocaleString()} for this job.`,
+    });
   };
+
+  if (loading) {
+    return (
+      <div className="min-h-screen bg-background flex items-center justify-center">
+        <div className="text-center">
+          <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mx-auto mb-4" />
+          <p className="text-muted-foreground">Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  if (!order) return null;
 
   if (isCompleted) {
     return (
@@ -58,7 +172,7 @@ const CompleteJob = () => {
             Great work! You've earned
           </p>
           <p className="text-4xl font-extrabold text-success mb-8">
-            ₹{activeJob.workerEarnings}
+            ₹{Number(order.total_amount).toLocaleString()}
           </p>
           <Button onClick={() => navigate("/worker")} className="font-bold">
             Back to Dashboard
@@ -92,12 +206,12 @@ const CompleteJob = () => {
       <div className="px-6 py-6">
         <Card className="shadow-card mb-6">
           <CardContent className="p-4">
-            <h3 className="font-bold mb-2">{activeJob.serviceType.name}</h3>
+            <h3 className="font-bold mb-2">{order.service_type}</h3>
             <p className="text-sm text-muted-foreground mb-1">
-              Customer: {activeJob.customerName}
+              Customer: {order.profiles?.full_name || "Customer"}
             </p>
             <p className="text-lg font-extrabold text-success">
-              Earnings: ₹{activeJob.workerEarnings}
+              Earnings: ₹{Number(order.total_amount).toLocaleString()}
             </p>
           </CardContent>
         </Card>
@@ -146,14 +260,6 @@ const CompleteJob = () => {
                 <CheckCircle2 className="w-5 h-5 mr-2" />
                 Complete Job
               </Button>
-            </div>
-
-            {/* Demo hint */}
-            <div className="mt-6 p-3 bg-muted/50 rounded-lg">
-              <p className="text-xs text-muted-foreground text-center">
-                <span className="font-bold">Demo:</span> OTP is{" "}
-                <span className="font-extrabold text-foreground">{activeJob.otp}</span>
-              </p>
             </div>
           </CardContent>
         </Card>
