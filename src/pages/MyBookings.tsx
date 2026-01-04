@@ -1,48 +1,107 @@
-import React from "react";
+import React, { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { format } from "date-fns";
-import { ArrowLeft, Calendar, Clock, MapPin, ChevronRight } from "lucide-react";
-import { useBooking } from "@/context/BookingContext";
-import { Booking, BookingStatus } from "@/data/servicesData";
+import { ArrowLeft, Calendar, Clock, MapPin, ChevronRight, RefreshCw } from "lucide-react";
+import { useOrders } from "@/hooks/useOrders";
 import { Button } from "@/components/ui/button";
+import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
+import OrderStatusTracker from "@/components/services/OrderStatusTracker";
+import PaymentModal from "@/components/customer/PaymentModal";
 
-const statusLabels: Record<BookingStatus, { label: string; color: string }> = {
+const statusLabels: Record<string, { label: string; color: string }> = {
+  pending: { label: "Pending", color: "bg-yellow-500/10 text-yellow-600" },
   searching: { label: "Finding Pro", color: "bg-primary/10 text-primary" },
-  assigned: { label: "Assigned", color: "bg-success/10 text-success" },
-  on_the_way: { label: "On the Way", color: "bg-warning/10 text-warning" },
-  in_progress: { label: "In Progress", color: "bg-accent/10 text-accent" },
-  completed: { label: "Completed", color: "bg-success/10 text-success" },
+  assigned: { label: "Assigned", color: "bg-purple-500/10 text-purple-600" },
+  in_progress: { label: "In Progress", color: "bg-orange-500/10 text-orange-600" },
+  completed: { label: "Completed", color: "bg-green-500/10 text-green-600" },
+  cancelled: { label: "Cancelled", color: "bg-red-500/10 text-red-600" },
+};
+
+const serviceIcons: Record<string, string> = {
+  plumber: "🔧",
+  carpenter: "🔨",
+  painter: "🎨",
+  electrician: "⚡",
+  cleaner: "🧹",
+  ac_repair: "❄️",
 };
 
 const MyBookings: React.FC = () => {
   const navigate = useNavigate();
-  const { bookings, setCurrentBooking } = useBooking();
+  const { orders, loading, refetch } = useOrders();
+  const [selectedOrder, setSelectedOrder] = useState<any>(null);
+  const [showPaymentModal, setShowPaymentModal] = useState(false);
 
-  const handleBookingClick = (booking: Booking) => {
-    setCurrentBooking(booking);
-    navigate("/");
+  const activeOrders = orders.filter(
+    (o) => !["completed", "cancelled"].includes(o.status)
+  );
+  const pastOrders = orders.filter((o) =>
+    ["completed", "cancelled"].includes(o.status)
+  );
+
+  const handleOrderClick = (order: any) => {
+    if (order.status === "assigned" && !order.worker_id) {
+      setSelectedOrder(order);
+      setShowPaymentModal(true);
+    } else {
+      setSelectedOrder(order);
+    }
   };
 
-  const activeBookings = bookings.filter(b => b.status !== "completed");
-  const pastBookings = bookings.filter(b => b.status === "completed");
+  // Show order tracker if viewing an active order
+  if (selectedOrder && ["searching", "assigned", "in_progress"].includes(selectedOrder.status)) {
+    return (
+      <>
+        <OrderStatusTracker
+          order={selectedOrder}
+          onClose={() => {
+            setSelectedOrder(null);
+            refetch();
+          }}
+        />
+        {selectedOrder.status === "assigned" && (
+          <PaymentModal
+            isOpen={showPaymentModal}
+            onClose={() => setShowPaymentModal(false)}
+            orderId={selectedOrder.id}
+            amount={Number(selectedOrder.total_amount)}
+            onPaymentComplete={() => {
+              setShowPaymentModal(false);
+              refetch();
+            }}
+          />
+        )}
+      </>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-background">
       {/* Header */}
       <header className="sticky top-0 z-40 bg-card/95 backdrop-blur-lg border-b border-border">
         <div className="container max-w-md mx-auto px-4 py-4">
-          <div className="flex items-center gap-4">
-            <Button size="icon" variant="ghost" onClick={() => navigate(-1)}>
-              <ArrowLeft className="w-5 h-5" />
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-4">
+              <Button size="icon" variant="ghost" onClick={() => navigate(-1)}>
+                <ArrowLeft className="w-5 h-5" />
+              </Button>
+              <h1 className="text-lg font-bold text-foreground">My Bookings</h1>
+            </div>
+            <Button size="icon" variant="ghost" onClick={refetch}>
+              <RefreshCw className={cn("w-5 h-5", loading && "animate-spin")} />
             </Button>
-            <h1 className="text-lg font-bold text-foreground">My Service Bookings</h1>
           </div>
         </div>
       </header>
 
       <main className="container max-w-md mx-auto px-4 py-6 space-y-8">
-        {bookings.length === 0 ? (
+        {loading ? (
+          <div className="flex flex-col items-center justify-center py-16">
+            <div className="w-12 h-12 border-4 border-primary border-t-transparent rounded-full animate-spin mb-4" />
+            <p className="text-muted-foreground">Loading orders...</p>
+          </div>
+        ) : orders.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 text-center">
             <div className="w-20 h-20 rounded-full bg-muted flex items-center justify-center mb-4">
               <Calendar className="w-10 h-10 text-muted-foreground" />
@@ -56,17 +115,17 @@ const MyBookings: React.FC = () => {
         ) : (
           <>
             {/* Active Bookings */}
-            {activeBookings.length > 0 && (
+            {activeOrders.length > 0 && (
               <section>
                 <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4">
-                  Active Bookings
+                  Active Bookings ({activeOrders.length})
                 </h2>
                 <div className="space-y-3">
-                  {activeBookings.map((booking) => (
-                    <BookingCard
-                      key={booking.id}
-                      booking={booking}
-                      onClick={() => handleBookingClick(booking)}
+                  {activeOrders.map((order) => (
+                    <OrderCard
+                      key={order.id}
+                      order={order}
+                      onClick={() => handleOrderClick(order)}
                     />
                   ))}
                 </div>
@@ -74,17 +133,17 @@ const MyBookings: React.FC = () => {
             )}
 
             {/* Past Bookings */}
-            {pastBookings.length > 0 && (
+            {pastOrders.length > 0 && (
               <section>
                 <h2 className="text-sm font-semibold text-muted-foreground uppercase tracking-wide mb-4">
-                  Past Bookings
+                  Past Bookings ({pastOrders.length})
                 </h2>
                 <div className="space-y-3">
-                  {pastBookings.map((booking) => (
-                    <BookingCard
-                      key={booking.id}
-                      booking={booking}
-                      onClick={() => handleBookingClick(booking)}
+                  {pastOrders.map((order) => (
+                    <OrderCard
+                      key={order.id}
+                      order={order}
+                      onClick={() => handleOrderClick(order)}
                     />
                   ))}
                 </div>
@@ -97,14 +156,14 @@ const MyBookings: React.FC = () => {
   );
 };
 
-interface BookingCardProps {
-  booking: Booking;
+interface OrderCardProps {
+  order: any;
   onClick: () => void;
 }
 
-const BookingCard: React.FC<BookingCardProps> = ({ booking, onClick }) => {
-  const Icon = booking.service.icon;
-  const status = statusLabels[booking.status];
+const OrderCard: React.FC<OrderCardProps> = ({ order, onClick }) => {
+  const status = statusLabels[order.status] || statusLabels.pending;
+  const icon = serviceIcons[order.category] || "🔧";
 
   return (
     <button
@@ -116,33 +175,38 @@ const BookingCard: React.FC<BookingCardProps> = ({ booking, onClick }) => {
       )}
     >
       {/* Service Icon */}
-      <div className={cn("w-12 h-12 rounded-xl flex items-center justify-center flex-shrink-0", booking.service.bgColor)}>
-        <Icon className={cn("w-6 h-6", booking.service.color)} />
+      <div className="w-12 h-12 rounded-xl bg-primary/10 flex items-center justify-center text-xl flex-shrink-0">
+        {icon}
       </div>
 
       {/* Content */}
       <div className="flex-1 min-w-0">
         <div className="flex items-center gap-2 mb-1">
-          <h4 className="font-semibold text-foreground">{booking.service.name}</h4>
+          <h4 className="font-semibold text-foreground">{order.service_name}</h4>
           <span className={cn("text-xs px-2 py-0.5 rounded-full font-medium", status.color)}>
             {status.label}
           </span>
         </div>
-        <p className="text-sm text-muted-foreground mb-2">{booking.serviceType.name}</p>
+        <p className="text-sm text-muted-foreground mb-2">{order.service_type}</p>
         <div className="flex items-center gap-3 text-xs text-muted-foreground">
           <div className="flex items-center gap-1">
             <Calendar className="w-3.5 h-3.5" />
-            <span>{format(booking.date, "MMM d")}</span>
+            <span>{format(new Date(order.scheduled_date), "MMM d")}</span>
           </div>
           <div className="flex items-center gap-1">
             <Clock className="w-3.5 h-3.5" />
-            <span>{booking.timeSlot.label}</span>
+            <span>{order.scheduled_time}</span>
           </div>
         </div>
       </div>
 
-      {/* Arrow */}
-      <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+      {/* Amount & Arrow */}
+      <div className="flex items-center gap-2">
+        <span className="text-sm font-bold text-primary">
+          ₹{Number(order.total_amount).toLocaleString()}
+        </span>
+        <ChevronRight className="w-5 h-5 text-muted-foreground flex-shrink-0" />
+      </div>
     </button>
   );
 };

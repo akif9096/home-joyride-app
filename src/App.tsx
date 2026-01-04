@@ -11,6 +11,7 @@ import Profile from "./pages/Profile";
 import MyBookings from "./pages/MyBookings";
 import NotFound from "./pages/NotFound";
 import Login from "./pages/Login";
+import Auth from "./pages/Auth";
 import Orders from "./pages/Orders";
 import Search from "./pages/Search";
 import Addresses from "./pages/Addresses";
@@ -18,6 +19,9 @@ import Payments from "./pages/Payments";
 import Notifications from "./pages/Notifications";
 import Help from "./pages/Help";
 import Settings from "./pages/Settings";
+
+// Admin pages
+import AdminDashboard from "./pages/admin/AdminDashboard";
 
 // Worker pages
 import WorkerLogin from "./pages/worker/WorkerLogin";
@@ -42,6 +46,7 @@ const App = () => (
               <Routes>
                 {/* Customer App */}
                 <Route path="/" element={<Index />} />
+                <Route path="/auth" element={<Auth />} />
                 <Route path="/profile" element={<Profile />} />
                 <Route path="/bookings" element={<MyBookings />} />
                 <Route path="/login" element={<Login />} />
@@ -52,6 +57,9 @@ const App = () => (
                 <Route path="/notifications" element={<Notifications />} />
                 <Route path="/help" element={<Help />} />
                 <Route path="/settings" element={<Settings />} />
+
+                {/* Admin App */}
+                <Route path="/admin" element={<AdminDashboard />} />
 
                 {/* Worker App */}
                 <Route path="/worker/login" element={<WorkerLogin />} />
