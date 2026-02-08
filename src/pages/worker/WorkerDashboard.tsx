@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import WorkerNav from "@/components/worker/WorkerNav";
 import OrderAlertModal from "@/components/worker/OrderAlertModal";
+import PendingOrdersCard from "@/components/worker/PendingOrdersCard";
 import { useWorkerNotifications } from "@/hooks/useWorkerNotifications";
 import { useToast } from "@/hooks/use-toast";
 import { format } from "date-fns";
@@ -470,6 +471,17 @@ const WorkerDashboard = () => {
             <Bell className="w-6 h-6 mr-3" />
             {pendingOrders.length} New Job Request{pendingOrders.length > 1 ? "s" : ""} - Tap to View
           </Button>
+        </div>
+      )}
+
+      {/* Pending Orders Card */}
+      {pendingOrders.length > 0 && (
+        <div className="mt-6">
+          <PendingOrdersCard
+            orders={pendingOrders}
+            onAccept={acceptOrder}
+            onReject={rejectOrder}
+          />
         </div>
       )}
 

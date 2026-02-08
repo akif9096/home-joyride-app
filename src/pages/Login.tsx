@@ -9,7 +9,7 @@ import { useToast } from "@/components/ui/use-toast";
 
 const Login: React.FC = () => {
   const navigate = useNavigate();
-  const { login } = useAuth();
+  const { login, setUserRole } = useAuth();
   const { toast } = useToast();
   const [phone, setPhone] = useState("");
   const [loading, setLoading] = useState(false);
@@ -20,6 +20,7 @@ const Login: React.FC = () => {
     const ok = login(phone.trim());
     setLoading(false);
     if (ok) {
+      setUserRole("customer");
       toast({ title: "Signed in", description: "You are now signed in." });
       navigate("/profile");
     } else {

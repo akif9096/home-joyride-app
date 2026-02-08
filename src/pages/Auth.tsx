@@ -1,23 +1,20 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/context/AuthContext";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { useToast } from "@/hooks/use-toast";
- import { Wrench, User, Shield, Eye, EyeOff, ArrowLeft, Loader2 } from "lucide-react";
-import {
-  InputOTP,
-  InputOTPGroup,
-  InputOTPSlot,
-} from "@/components/ui/input-otp";
+import { Wrench, User, Shield, Eye, EyeOff, Loader2 } from "lucide-react";
 
-type AuthMode = "login" | "signup" | "forgot-password" | "verify-otp" | "reset-password";
+type AuthMode = "login" | "signup" | "forgot-password";
 type UserType = "customer" | "worker" | "admin";
 
 const Auth = () => {
   const navigate = useNavigate();
   const { toast } = useToast();
+  const { setUserRole } = useAuth();
   const [mode, setMode] = useState<AuthMode>("login");
   const [userType, setUserType] = useState<UserType>("customer");
   const [email, setEmail] = useState("");
@@ -27,85 +24,189 @@ const Auth = () => {
   const [loading, setLoading] = useState(false);
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
-  const [otp, setOtp] = useState("");
-  const [pendingEmail, setPendingEmail] = useState("");
-   const [pendingUserData, setPendingUserData] = useState<{
-     email: string;
-     password: string;
-     fullName: string;
-     userType: UserType;
-   } | null>(null);
- 
-   const sendOtpEmail = async (email: string, type: "signup" | "reset") => {
-     const response = await fetch(
-       `${import.meta.env.VITE_SUPABASE_URL}/functions/v1/send-otp`,
-       {
-         method: "POST",
-         headers: {
-           "Content-Type": "application/json",
-           Authorization: `Bearer ${import.meta.env.VITE_SUPABASE_PUBLISHABLE_KEY}`,
-         },
-         body: JSON.stringify({ email, type }),
-       }
-     );
- 
-     if (!response.ok) {
-       const error = await response.json();
-       throw new Error(error.error || "Failed to send OTP");
-     }
- 
-     return response.json();
-   };
 
+  // Handle both login and signup
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
       if (mode === "signup") {
+        // Validation
+        if (!fullName.trim()) {
+          throw new Error("Please enter your full name");
+        }
+        if (!email || !email.includes("@")) {
+          throw new Error("Please enter a valid email");
+        }
+        if (password.length < 6) {
+          throw new Error("Password must be at least 6 characters");
+        }
         if (password !== confirmPassword) {
-          toast({
-            title: "Error",
-            description: "Passwords do not match",
-            variant: "destructive",
-          });
-          setLoading(false);
-          return;
+          throw new Error("Passwords do not match");
         }
 
-         // Send OTP email first
-         await sendOtpEmail(email, "signup");
- 
-         // Store pending user data for after verification
-         setPendingUserData({
-           email,
-           password,
-           fullName,
-           userType,
+        const normalizedEmail = email.trim().toLowerCase();
+
+        // Try direct signup with Supabase
+        const { data: signUpData, error: signUpError } = await supabase.auth.signUp({
+          email: normalizedEmail,
+          password,
+          options: {
+            data: {
+              full_name: fullName,
+            },
+          },
         });
-         setPendingEmail(email);
-         setMode("verify-otp");
- 
-         toast({
-           title: "OTP sent!",
-           description: "Please check your email for the verification code.",
-         });
-      } else if (mode === "login") {
-        const { data, error } = await supabase.auth.signInWithPassword({
-          email,
+
+        console.debug("signUpData:", signUpData, "signUpError:", signUpError);
+
+        if (signUpError) {
+          throw new Error(
+            signUpError.message.includes("already registered")
+              ? "An account with this email already exists. Please sign in."
+              : signUpError.message
+          );
+        }
+
+        if (!signUpData?.user) {
+          throw new Error("Account creation failed. Please try again.");
+        }
+
+        // Insert user role
+        const { error: roleError } = await supabase.from("user_roles").insert({
+          user_id: signUpData.user.id,
+          role: userType,
+        });
+
+        if (roleError) {
+          console.error("Role insert error:", roleError);
+        }
+
+        // If worker, create worker profile
+        if (userType === "worker") {
+          const { error: workerError } = await supabase.from("workers").insert({
+            user_id: signUpData.user.id,
+            category: "plumber",
+            is_verified: false,
+            is_online: false,
+          });
+
+          if (workerError) {
+            console.error("Worker profile insert error:", workerError);
+          }
+        }
+
+        // Try to auto sign in (if email confirmation is disabled)
+        const { error: signInError } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
           password,
         });
 
-        if (error) throw error;
+        if (signInError) {
+          // Email confirmation required - guide user to check email
+          toast({
+            title: "Account created!",
+            description:
+              "Please check your email for a confirmation link to verify your account before signing in.",
+          });
+          setMode("login");
+          setEmail(normalizedEmail);
+          setPassword("");
+          setConfirmPassword("");
+          setFullName("");
+        } else {
+          // Auto sign-in successful
+          const roleToStore: "customer" | "worker" | "admin" | null = userType;
+          try {
+            await setUserRole(roleToStore);
+            localStorage.setItem("user_role", JSON.stringify(roleToStore));
+          } catch {}
 
-        // Check user roles and redirect accordingly
-        const { data: roles } = await supabase
+          toast({
+            title: "Account created!",
+            description: "You are now signed in.",
+          });
+
+          // Redirect based on role
+          if (userType === "admin") {
+            navigate("/admin");
+          } else if (userType === "worker") {
+            navigate("/worker");
+          } else {
+            navigate("/");
+          }
+        }
+      } else if (mode === "login") {
+        // Validate
+        if (!email || !email.includes("@")) {
+          throw new Error("Please enter a valid email");
+        }
+        if (!password || password.length < 6) {
+          throw new Error("Please enter your password");
+        }
+
+        const normalizedEmail = email.trim().toLowerCase();
+
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: normalizedEmail,
+          password,
+        });
+
+        if (error) {
+          console.error("signInWithPassword error:", error);
+          const msg = String(error.message || "Invalid login credentials");
+
+          // Provide helpful error messages
+          if (/confirm|verify|verification|email.*confirm/i.test(msg)) {
+            throw new Error(
+              "Please confirm your email first. Check your inbox for a verification link."
+            );
+          }
+          if (/invalid login|invalid email|invalid credentials/i.test(msg)) {
+            throw new Error(
+              "Invalid email or password. Check your credentials and try again, or use magic link."
+            );
+          }
+          throw new Error(msg);
+        }
+
+        if (!data.user) {
+          throw new Error(
+            "Login failed. Please verify your email and try again."
+          );
+        }
+
+        // Get or set user role
+        const { data: roles, error: roleError } = await supabase
           .from("user_roles")
           .select("role")
           .eq("user_id", data.user.id);
 
-        const userRoles = roles?.map((r) => r.role) || [];
+        let userRoles: string[] = [];
+        if (!roleError && roles && roles.length > 0) {
+          userRoles = roles.map((r) => r.role);
+        } else {
+          // No role found, use selected role
+          userRoles = [userType];
+          await supabase.from("user_roles").insert({
+            user_id: data.user.id,
+            role: userType,
+          });
+        }
 
+        const roleToStore: "customer" | "worker" | "admin" | null = userRoles[0] || userType;
+        try {
+          await setUserRole(roleToStore);
+          localStorage.setItem("user_role", JSON.stringify(roleToStore));
+        } catch {}
+
+        toast({
+          title: "Welcome back!",
+          description: "You are now signed in.",
+        });
+
+        // Redirect based on actual role
         if (userRoles.includes("admin")) {
           navigate("/admin");
         } else if (userRoles.includes("worker")) {
@@ -113,16 +214,12 @@ const Auth = () => {
         } else {
           navigate("/");
         }
-
-        toast({
-          title: "Welcome back!",
-          description: "You have been logged in successfully.",
-        });
       }
     } catch (error: any) {
+      console.error("Auth error:", error);
       toast({
-        title: "Error",
-        description: error.message || "An error occurred",
+        title: mode === "signup" ? "Signup Error" : "Login Error",
+        description: error.message || "An error occurred. Please try again.",
         variant: "destructive",
       });
     } finally {
@@ -130,158 +227,74 @@ const Auth = () => {
     }
   };
 
+  // Handle magic link sign-in
+  const handleMagicLink = async () => {
+    if (!email || !email.includes("@")) {
+      toast({
+        title: "Email required",
+        description: "Please enter a valid email address.",
+        variant: "destructive",
+      });
+      return;
+    }
+
+    setLoading(true);
+    try {
+      const { error } = await supabase.auth.signInWithOtp({
+        email: email.trim().toLowerCase(),
+      });
+
+      if (error) throw error;
+
+      toast({
+        title: "Magic link sent!",
+        description: "Check your email for a sign-in link.",
+      });
+    } catch (error: any) {
+      toast({
+        title: "Error",
+        description: error.message || "Failed to send magic link.",
+        variant: "destructive",
+      });
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Handle forgot password
   const handleForgotPassword = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-       await sendOtpEmail(email, "reset");
-       setPendingEmail(email);
-       setMode("verify-otp");
+      if (!email || !email.includes("@")) {
+        throw new Error("Please enter a valid email");
+      }
+
+      const { error } = await supabase.auth.resetPasswordForEmail(
+        email.trim().toLowerCase()
+      );
+
+      if (error) throw error;
 
       toast({
-         title: "OTP sent!",
-         description: "Check your email for the password reset code.",
+        title: "Reset link sent!",
+        description: "Check your email for a password reset link.",
       });
+
+      setMode("login");
+      setEmail("");
+      setPassword("");
     } catch (error: any) {
       toast({
         title: "Error",
-        description: error.message || "An error occurred",
+        description: error.message || "Failed to send reset link.",
         variant: "destructive",
       });
     } finally {
       setLoading(false);
     }
   };
-
-  const handleVerifyOtp = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-
-    try {
-       // Verify OTP from database
-       const { data: otpRecord, error: otpError } = await supabase
-         .from("email_otps")
-         .select("*")
-         .eq("email", pendingEmail)
-         .eq("otp_code", otp)
-         .eq("verified", false)
-         .gte("expires_at", new Date().toISOString())
-         .maybeSingle();
- 
-       if (otpError || !otpRecord) {
-         throw new Error("Invalid or expired OTP code");
-       }
- 
-       // Mark OTP as verified
-       await supabase
-         .from("email_otps")
-         .update({ verified: true })
-         .eq("id", otpRecord.id);
- 
-       // If we have pending signup data, complete the registration
-       if (pendingUserData) {
-         const { data, error } = await supabase.auth.signUp({
-           email: pendingUserData.email,
-           password: pendingUserData.password,
-           options: {
-             data: {
-               full_name: pendingUserData.fullName,
-             },
-           },
-         });
-
-         if (error) throw error;
- 
-         if (data.user) {
-           // Add role based on user type
-           if (pendingUserData.userType !== "customer") {
-             const { error: roleError } = await supabase
-               .from("user_roles")
-               .insert({ user_id: data.user.id, role: pendingUserData.userType });
- 
-             if (roleError) console.error("Role insert error:", roleError);
-           }
- 
-           // If worker, create worker profile
-           if (pendingUserData.userType === "worker") {
-             const { error: workerError } = await supabase
-               .from("workers")
-               .insert({
-                 user_id: data.user.id,
-                 category: "plumber",
-                 is_verified: false,
-                 is_online: false,
-               });
- 
-             if (workerError) console.error("Worker insert error:", workerError);
-           }
- 
-           toast({
-             title: "Account created!",
-             description: "You can now log in with your credentials.",
-           });
-           setPendingUserData(null);
-           setMode("login");
-           setOtp("");
-           setEmail(pendingUserData.email);
-           setPassword("");
-         }
-       } else {
-         // For password reset flow
-         setMode("reset-password");
-         toast({
-           title: "OTP verified!",
-           description: "You can now set a new password.",
-         });
-       }
-
-    } catch (error: any) {
-      toast({
-        title: "Verification failed",
-        description: error.message || "Invalid or expired code",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const handleResendOtp = async () => {
-    setLoading(true);
-    try {
-       const type = pendingUserData ? "signup" : "reset";
-       await sendOtpEmail(pendingEmail, type);
-
-      toast({
-        title: "Code resent!",
-        description: "A new verification code has been sent to your email.",
-      });
-    } catch (error: any) {
-      toast({
-        title: "Error",
-        description: error.message || "Failed to resend code",
-        variant: "destructive",
-      });
-    } finally {
-      setLoading(false);
-    }
-  };
-
-  const renderBackButton = () => (
-    <button
-      type="button"
-       onClick={() => {
-         setMode("login");
-         setPendingUserData(null);
-         setOtp("");
-       }}
-      className="flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground mb-4"
-    >
-      <ArrowLeft className="w-4 h-4" />
-      Back to login
-    </button>
-  );
 
   return (
     <div className="min-h-screen bg-gradient-to-b from-background to-muted flex items-center justify-center p-4">
@@ -292,116 +305,25 @@ const Auth = () => {
             {mode === "login" && "Welcome back!"}
             {mode === "signup" && "Create your account"}
             {mode === "forgot-password" && "Reset your password"}
-            {mode === "verify-otp" && "Verify your email"}
-             {mode === "reset-password" && "Set new password"}
           </p>
         </div>
 
         <div className="bg-card border border-border rounded-2xl p-6 shadow-lg">
-           {/* Reset Password Form */}
-           {mode === "reset-password" && (
-             <>
-               {renderBackButton()}
-               <form
-                 onSubmit={async (e) => {
-                   e.preventDefault();
-                   if (password !== confirmPassword) {
-                     toast({
-                       title: "Error",
-                       description: "Passwords do not match",
-                       variant: "destructive",
-                     });
-                     return;
-                   }
-                   setLoading(true);
-                   try {
-                     const { error } = await supabase.auth.updateUser({
-                       password,
-                     });
-                     if (error) throw error;
-                     toast({
-                       title: "Password updated!",
-                       description: "You can now log in with your new password.",
-                     });
-                     setMode("login");
-                     setPassword("");
-                     setConfirmPassword("");
-                   } catch (error: any) {
-                     toast({
-                       title: "Error",
-                       description: error.message || "Failed to update password",
-                       variant: "destructive",
-                     });
-                   } finally {
-                     setLoading(false);
-                   }
-                 }}
-                 className="space-y-4"
-               >
-                 <div className="space-y-2">
-                   <Label htmlFor="new-password">New Password</Label>
-                   <div className="relative">
-                     <Input
-                       id="new-password"
-                       type={showPassword ? "text" : "password"}
-                       value={password}
-                       onChange={(e) => setPassword(e.target.value)}
-                       placeholder="••••••••"
-                       required
-                       minLength={6}
-                       className="pr-10"
-                     />
-                     <button
-                       type="button"
-                       onClick={() => setShowPassword(!showPassword)}
-                       className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                     >
-                       {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                     </button>
-                   </div>
-                 </div>
- 
-                 <div className="space-y-2">
-                   <Label htmlFor="confirm-new-password">Confirm New Password</Label>
-                   <div className="relative">
-                     <Input
-                       id="confirm-new-password"
-                       type={showConfirmPassword ? "text" : "password"}
-                       value={confirmPassword}
-                       onChange={(e) => setConfirmPassword(e.target.value)}
-                       placeholder="••••••••"
-                       required
-                       minLength={6}
-                       className="pr-10"
-                     />
-                     <button
-                       type="button"
-                       onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                       className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
-                     >
-                       {showConfirmPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-                     </button>
-                   </div>
-                 </div>
- 
-                 <Button type="submit" className="w-full" disabled={loading}>
-                   {loading ? (
-                     <>
-                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                       Updating...
-                     </>
-                   ) : (
-                     "Update Password"
-                   )}
-                 </Button>
-               </form>
-             </>
-           )}
- 
           {/* Forgot Password Form */}
           {mode === "forgot-password" && (
             <>
-              {renderBackButton()}
+              <button
+                type="button"
+                onClick={() => {
+                  setMode("login");
+                  setEmail("");
+                  setPassword("");
+                }}
+                className="text-sm text-primary hover:underline mb-4"
+              >
+                ← Back to login
+              </button>
+
               <form onSubmit={handleForgotPassword} className="space-y-4">
                 <div className="space-y-2">
                   <Label htmlFor="reset-email">Email</Label>
@@ -416,67 +338,15 @@ const Auth = () => {
                 </div>
 
                 <Button type="submit" className="w-full" disabled={loading}>
-                   {loading ? (
-                     <>
-                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                       Sending...
-                     </>
-                   ) : (
-                     "Send Reset Code"
-                   )}
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    "Send Reset Link"
+                  )}
                 </Button>
-              </form>
-            </>
-          )}
-
-          {/* OTP Verification Form */}
-          {mode === "verify-otp" && (
-            <>
-              {renderBackButton()}
-              <form onSubmit={handleVerifyOtp} className="space-y-6">
-                <div className="text-center">
-                  <p className="text-sm text-muted-foreground mb-4">
-                    Enter the 6-digit code sent to <strong>{pendingEmail}</strong>
-                  </p>
-                  <div className="flex justify-center">
-                    <InputOTP
-                      value={otp}
-                      onChange={setOtp}
-                      maxLength={6}
-                    >
-                      <InputOTPGroup>
-                        <InputOTPSlot index={0} />
-                        <InputOTPSlot index={1} />
-                        <InputOTPSlot index={2} />
-                        <InputOTPSlot index={3} />
-                        <InputOTPSlot index={4} />
-                        <InputOTPSlot index={5} />
-                      </InputOTPGroup>
-                    </InputOTP>
-                  </div>
-                </div>
-
-                <Button type="submit" className="w-full" disabled={loading || otp.length !== 6}>
-                   {loading ? (
-                     <>
-                       <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                       Verifying...
-                     </>
-                   ) : (
-                     "Verify Code"
-                   )}
-                </Button>
-
-                <div className="text-center">
-                  <button
-                    type="button"
-                    onClick={handleResendOtp}
-                    className="text-sm text-primary hover:underline"
-                    disabled={loading}
-                  >
-                    Didn't receive the code? Resend
-                  </button>
-                </div>
               </form>
             </>
           )}
@@ -484,61 +354,62 @@ const Auth = () => {
           {/* Login & Signup Forms */}
           {(mode === "login" || mode === "signup") && (
             <>
-              {mode === "signup" && (
-            <div className="mb-6">
-              <Label className="text-sm font-medium mb-3 block">I am a</Label>
-              <div className="grid grid-cols-3 gap-2">
-                {[
-                  { type: "customer" as UserType, icon: User, label: "Customer" },
-                  { type: "worker" as UserType, icon: Wrench, label: "Worker" },
-                  { type: "admin" as UserType, icon: Shield, label: "Admin" },
-                ].map(({ type, icon: Icon, label }) => (
-                  <button
-                    key={type}
-                    type="button"
-                    onClick={() => setUserType(type)}
-                    className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all ${
-                      userType === type
-                        ? "border-primary bg-primary/10 text-primary"
-                        : "border-border bg-background text-muted-foreground hover:border-primary/50"
-                    }`}
-                  >
-                    <Icon className="w-5 h-5 mb-1" />
-                    <span className="text-xs font-medium">{label}</span>
-                  </button>
-                ))}
+              {/* Role Selector */}
+              <div className="mb-6">
+                <Label className="text-sm font-medium mb-3 block">
+                  {mode === "login" ? "Logging in as" : "I am a"}
+                </Label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { type: "customer" as UserType, icon: User, label: "Customer" },
+                    { type: "worker" as UserType, icon: Wrench, label: "Worker" },
+                    { type: "admin" as UserType, icon: Shield, label: "Admin" },
+                  ].map(({ type, icon: Icon, label }) => (
+                    <button
+                      key={type}
+                      type="button"
+                      onClick={() => setUserType(type)}
+                      className={`flex flex-col items-center justify-center p-3 rounded-xl border-2 transition-all ${
+                        userType === type
+                          ? "border-primary bg-primary/10 text-primary"
+                          : "border-border bg-background text-muted-foreground hover:border-primary/50"
+                      }`}
+                    >
+                      <Icon className="w-5 h-5 mb-1" />
+                      <span className="text-xs font-medium">{label}</span>
+                    </button>
+                  ))}
+                </div>
               </div>
-            </div>
-              )}
 
-          <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === "signup" && (
-              <div className="space-y-2">
-                <Label htmlFor="fullName">Full Name</Label>
-                <Input
-                  id="fullName"
-                  type="text"
-                  value={fullName}
-                  onChange={(e) => setFullName(e.target.value)}
-                  placeholder="John Doe"
-                  required
-                />
-              </div>
-            )}
+              <form onSubmit={handleSubmit} className="space-y-4">
+                {mode === "signup" && (
+                  <div className="space-y-2">
+                    <Label htmlFor="fullName">Full Name</Label>
+                    <Input
+                      id="fullName"
+                      type="text"
+                      value={fullName}
+                      onChange={(e) => setFullName(e.target.value)}
+                      placeholder="John Doe"
+                      required
+                    />
+                  </div>
+                )}
 
-            <div className="space-y-2">
-              <Label htmlFor="email">Email</Label>
-              <Input
-                id="email"
-                type="email"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@example.com"
-                required
-              />
-            </div>
+                <div className="space-y-2">
+                  <Label htmlFor="email">Email</Label>
+                  <Input
+                    id="email"
+                    type="email"
+                    value={email}
+                    onChange={(e) => setEmail(e.target.value)}
+                    placeholder="you@example.com"
+                    required
+                  />
+                </div>
 
-            <div className="space-y-2">
+                <div className="space-y-2">
                   <div className="flex items-center justify-between">
                     <Label htmlFor="password">Password</Label>
                     {mode === "login" && (
@@ -552,16 +423,16 @@ const Auth = () => {
                     )}
                   </div>
                   <div className="relative">
-              <Input
-                id="password"
+                    <Input
+                      id="password"
                       type={showPassword ? "text" : "password"}
-                value={password}
-                onChange={(e) => setPassword(e.target.value)}
-                placeholder="••••••••"
-                required
-                minLength={6}
+                      value={password}
+                      onChange={(e) => setPassword(e.target.value)}
+                      placeholder="••••••••"
+                      required
+                      minLength={6}
                       className="pr-10"
-              />
+                    />
                     <button
                       type="button"
                       onClick={() => setShowPassword(!showPassword)}
@@ -605,31 +476,61 @@ const Auth = () => {
                   </div>
                 )}
 
-            <Button type="submit" className="w-full" disabled={loading}>
-               {loading ? (
-                 <>
-                   <Loader2 className="w-4 h-4 mr-2 animate-spin" />
-                   Please wait...
-                 </>
-               ) : mode === "login" ? (
-                 "Sign In"
-               ) : (
-                 "Create Account"
-               )}
-            </Button>
-          </form>
+                <Button type="submit" className="w-full" disabled={loading}>
+                  {loading ? (
+                    <>
+                      <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                      Please wait...
+                    </>
+                  ) : mode === "login" ? (
+                    "Sign In"
+                  ) : (
+                    "Create Account"
+                  )}
+                </Button>
 
-          <div className="mt-6 text-center">
-            <button
-              type="button"
-              onClick={() => setMode(mode === "login" ? "signup" : "login")}
-              className="text-sm text-primary hover:underline"
-            >
-              {mode === "login"
-                ? "Don't have an account? Sign up"
-                : "Already have an account? Sign in"}
-            </button>
-          </div>
+                {mode === "login" && (
+                  <div className="mt-3">
+                    <Button
+                      type="button"
+                      variant="outline"
+                      className="w-full"
+                      onClick={handleMagicLink}
+                      disabled={loading}
+                    >
+                      {loading ? (
+                        <>
+                          <Loader2 className="w-4 h-4 mr-2 animate-spin" />
+                          Sending...
+                        </>
+                      ) : (
+                        "Sign in with magic link"
+                      )}
+                    </Button>
+                    <p className="text-xs text-muted-foreground mt-2 text-center">
+                      No password? Use a magic link sent to your email.
+                    </p>
+                  </div>
+                )}
+              </form>
+
+              <div className="mt-6 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setMode(mode === "login" ? "signup" : "login");
+                    setEmail("");
+                    setPassword("");
+                    setConfirmPassword("");
+                    setFullName("");
+                  }}
+                  className="text-sm text-primary hover:underline"
+                >
+                  {mode === "login"
+                    ? "Don't have an account? Sign up"
+                    : "Already have an account? Sign in"}
+                </button>
+              </div>
             </>
           )}
         </div>

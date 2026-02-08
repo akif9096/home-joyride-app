@@ -1,23 +1,32 @@
- import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
+ /// <reference lib="deno.ns" />
+ import { serve } from "https://deno.land/std@0.208.0/http/server.ts";
  import { Resend } from "https://esm.sh/resend@2.0.0";
  import { createClient } from "https://esm.sh/@supabase/supabase-js@2.89.0";
  
  const resend = new Resend(Deno.env.get("RESEND_API_KEY"));
  
- const corsHeaders = {
-   "Access-Control-Allow-Origin": "*",
-   "Access-Control-Allow-Headers":
-     "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
- };
+// Build CORS headers per-request so we can echo the request origin (required when credentials are used)
+const buildCorsHeaders = (origin?: string) => {
+  const allowOrigin = origin || "*";
+  return {
+    "Access-Control-Allow-Origin": allowOrigin,
+    "Access-Control-Allow-Headers":
+      "authorization, x-client-info, apikey, content-type, x-supabase-client-platform, x-supabase-client-platform-version, x-supabase-client-runtime, x-supabase-client-runtime-version",
+    "Access-Control-Allow-Methods": "GET,HEAD,POST,OPTIONS",
+    // Only include credentials header when we have an explicit origin
+    ...(allowOrigin !== "*" ? { "Access-Control-Allow-Credentials": "true" } : {}),
+  };
+};
  
  function generateOTP(): string {
    return Math.floor(100000 + Math.random() * 900000).toString();
  }
  
  const handler = async (req: Request): Promise<Response> => {
-   if (req.method === "OPTIONS") {
-     return new Response(null, { headers: corsHeaders });
-   }
+  if (req.method === "OPTIONS") {
+    const origin = req.headers.get("origin") || undefined;
+    return new Response(null, { status: 204, headers: buildCorsHeaders(origin) });
+  }
  
    try {
      const { email, type } = await req.json();
@@ -26,10 +35,10 @@
        throw new Error("Email is required");
      }
  
-     const supabase = createClient(
-       Deno.env.get("SUPABASE_URL")!,
-       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
-     );
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
  
      // Generate OTP
      const otpCode = generateOTP();
@@ -84,19 +93,21 @@
  
      console.log("OTP email sent successfully:", emailResponse);
  
-     return new Response(JSON.stringify({ success: true }), {
-       status: 200,
-       headers: { "Content-Type": "application/json", ...corsHeaders },
-     });
+    const origin = req.headers.get("origin") || undefined;
+    return new Response(JSON.stringify({ success: true }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ...buildCorsHeaders(origin) },
+    });
    } catch (error: any) {
      console.error("Error in send-otp function:", error);
-     return new Response(
-       JSON.stringify({ error: error.message }),
-       {
-         status: 500,
-         headers: { "Content-Type": "application/json", ...corsHeaders },
-       }
-     );
+    const origin = req.headers.get("origin") || undefined;
+    return new Response(
+      JSON.stringify({ error: error.message }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...buildCorsHeaders(origin) },
+      }
+    );
    }
  };
  
