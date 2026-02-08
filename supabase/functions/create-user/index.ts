@@ -14,21 +14,29 @@ const buildCorsHeaders = (origin?: string) => {
 };
 
 const handler = async (req: Request): Promise<Response> => {
+  const origin = req.headers.get("origin") || undefined;
+  const corsHeaders = buildCorsHeaders(origin);
+
   if (req.method === "OPTIONS") {
-    const origin = req.headers.get("origin") || undefined;
     // Reply to preflight with explicit allowed methods/headers
-    return new Response(null, { status: 204, headers: buildCorsHeaders(origin) });
+    return new Response(null, { status: 204, headers: corsHeaders });
   }
 
   try {
     const { email, password, fullName, userType } = await req.json();
     if (!email || !password) {
-      return new Response(JSON.stringify({ error: 'email and password are required' }), { status: 400, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      return new Response(JSON.stringify({ error: "email and password are required" }), {
+        status: 400,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
     }
 
     const normalizedEmail = String(email).trim().toLowerCase();
 
-    const supabase = createClient(Deno.env.get('SUPABASE_URL')!, Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')!);
+    const supabase = createClient(
+      Deno.env.get("SUPABASE_URL")!,
+      Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+    );
 
     // Create user as admin and mark email confirmed
     const { data: createData, error: createError } = await supabase.auth.admin.createUser({
@@ -39,46 +47,67 @@ const handler = async (req: Request): Promise<Response> => {
     } as any);
 
     if (createError) {
-      console.error('createUser error:', createError);
-      const msg = String(createError.message || 'Failed to create user');
+      console.error("createUser error:", createError);
+      const msg = String(createError.message || "Failed to create user");
       if (/already|registered|exists/i.test(msg)) {
-        return new Response(JSON.stringify({ error: 'User already exists' }), { status: 409, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+        return new Response(JSON.stringify({ error: "User already exists" }), {
+          status: 409,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
       }
-      return new Response(JSON.stringify({ error: msg }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      return new Response(JSON.stringify({ error: msg }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
     }
 
     // normalize returned user object (some versions return { user } while others return user directly)
     const createdUser = (createData && ((createData as any).user ? (createData as any).user : createData)) as any;
 
     if (!createdUser || !createdUser.id) {
-      console.error('create-user: unexpected createData shape', createData);
-      return new Response(JSON.stringify({ error: 'Failed to create user' }), { status: 500, headers: { 'Content-Type': 'application/json', ...corsHeaders } });
+      console.error("create-user: unexpected createData shape", createData);
+      return new Response(JSON.stringify({ error: "Failed to create user" }), {
+        status: 500,
+        headers: { "Content-Type": "application/json", ...corsHeaders },
+      });
     }
 
     // Insert role into user_roles table
     try {
-      const { error: roleErr } = await supabase.from('user_roles').insert({ user_id: createdUser.id, role: userType || 'customer' });
-      if (roleErr) console.error('role insert error', roleErr);
+      const { error: roleErr } = await supabase.from("user_roles").insert({
+        user_id: createdUser.id,
+        role: (userType || "customer") as any,
+      });
+      if (roleErr) console.error("role insert error", roleErr);
     } catch (e) {
-      console.error('role insert exception', e);
+      console.error("role insert exception", e);
     }
 
     // If worker, create worker profile row
-    if (userType === 'worker') {
+    if (userType === "worker") {
       try {
-        const { error: workerErr } = await supabase.from('workers').insert({ user_id: createdUser.id, category: 'plumber', is_verified: false, is_online: false });
-        if (workerErr) console.error('worker insert error', workerErr);
+        const { error: workerErr } = await supabase.from("workers").insert({
+          user_id: createdUser.id,
+          category: "plumber",
+          is_verified: false,
+          is_online: false,
+        });
+        if (workerErr) console.error("worker insert error", workerErr);
       } catch (e) {
-        console.error('worker insert exception', e);
+        console.error("worker insert exception", e);
       }
     }
 
-    const origin = req.headers.get("origin") || undefined;
-    return new Response(JSON.stringify({ success: true, user: createdUser }), { status: 200, headers: { 'Content-Type': 'application/json', ...buildCorsHeaders(origin) } });
+    return new Response(JSON.stringify({ success: true, user: createdUser }), {
+      status: 200,
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    });
   } catch (error: any) {
-    console.error('create-user function error', error);
-    const origin = req.headers.get("origin") || undefined;
-    return new Response(JSON.stringify({ error: error.message }), { status: 500, headers: { 'Content-Type': 'application/json', ...buildCorsHeaders(origin) } });
+    console.error("create-user function error", error);
+    return new Response(JSON.stringify({ error: error.message }), {
+      status: 500,
+      headers: { "Content-Type": "application/json", ...corsHeaders },
+    });
   }
 };
 

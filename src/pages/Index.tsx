@@ -270,7 +270,7 @@ const Index: React.FC = () => {
           <Button
             variant="outline"
             className="w-full h-14 font-bold border-2 border-dashed"
-            onClick={() => navigate("/auth")}
+            onClick={() => navigate("/worker/login")}
           >
             Are you a professional? Join as a Worker →
           </Button>

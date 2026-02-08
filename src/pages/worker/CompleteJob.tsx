@@ -40,7 +40,7 @@ const CompleteJob = () => {
 
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      navigate("/auth");
+      navigate("/worker/login");
       return;
     }
 
