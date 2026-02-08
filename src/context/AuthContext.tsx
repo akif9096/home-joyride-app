@@ -73,20 +73,26 @@ export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) =>
 
     const { data: { subscription } } = supabase.auth.onAuthStateChange((_, session) => {
       if (session?.user) {
-        setUser({ name: session.user.user_metadata?.full_name || session.user.email || "", email: session.user.email || undefined });
-        
-        // Fetch user role
-        supabase
-          .from("user_roles")
-          .select("role")
-          .eq("user_id", session.user.id)
-          .single()
-          .then(({ data }) => {
-            if (data) {
-              setUserRole((data.role as UserRole) || "customer");
-            }
-          })
-          .catch(() => setUserRole("customer"));
+        setUser({
+          name: session.user.user_metadata?.full_name || session.user.email || "",
+          email: session.user.email || undefined,
+        });
+
+        // Fetch user role (use async/await because Postgrest builders aren't real Promises)
+        (async () => {
+          try {
+            const { data, error } = await supabase
+              .from("user_roles")
+              .select("role")
+              .eq("user_id", session.user.id)
+              .maybeSingle();
+
+            if (error) throw error;
+            setUserRole(((data?.role as UserRole) || "customer") as UserRole);
+          } catch {
+            setUserRole("customer");
+          }
+        })();
       } else {
         setUser(null);
         setUserRole(null);

@@ -105,7 +105,7 @@ const WorkerDashboard = () => {
   const checkWorkerAuth = async () => {
     const { data: { user } } = await supabase.auth.getUser();
     if (!user) {
-      navigate("/auth");
+      navigate("/worker/login");
       return;
     }
 
@@ -139,7 +139,7 @@ const WorkerDashboard = () => {
         description: "Could not fetch worker profile",
         variant: "destructive",
       });
-      navigate("/auth");
+      navigate("/worker/login");
       return;
     }
 
@@ -260,7 +260,7 @@ const WorkerDashboard = () => {
 
   const handleLogout = async () => {
     await supabase.auth.signOut();
-    navigate("/auth");
+    navigate("/worker/login");
   };
 
   if (loading) {
