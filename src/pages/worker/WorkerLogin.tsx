@@ -122,7 +122,7 @@ const WorkerLogin = () => {
       await supabase.from("email_otps").update({ verified: true }).eq("id", otpRecord.id);
 
       // create user (server-side) with worker role + worker profile
-      await callFunction("create-user", {
+      const result = await callFunction<{ success?: boolean; existing?: boolean; message?: string }>("create-user", {
         email: pending.email,
         password: pending.password,
         fullName: pending.fullName,
@@ -133,7 +133,10 @@ const WorkerLogin = () => {
       const ok = await login(pending.email, pending.password);
       if (!ok) throw new Error("Worker signup completed, but login failed. Please try logging in.");
 
-      toast({ title: "Account created", description: "Welcome to the Worker Portal." });
+      toast({
+        title: result.existing ? "Worker role added" : "Account created",
+        description: result.existing ? "Your existing account now has worker access." : "Welcome to the Worker Portal.",
+      });
       navigate("/worker");
     } catch (err: any) {
       toast({ title: "Verification failed", description: err.message || "Could not verify", variant: "destructive" });
