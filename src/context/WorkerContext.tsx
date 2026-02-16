@@ -170,13 +170,14 @@ export const WorkerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
 
     if (error || !data.user) return false;
 
-    await refreshWorkerFromSession();
-
-    // If user signed in but is not worker, sign them out.
-    const { data: roles } = await supabase
+    // Wait briefly for session to propagate, then check roles
+    // Use the authenticated session to query roles
+    const { data: roles, error: roleErr } = await supabase
       .from("user_roles")
       .select("role")
       .eq("user_id", data.user.id);
+
+    console.log("Worker login - roles fetched:", roles, "error:", roleErr);
 
     const isWorker = roles?.some((r) => r.role === "worker");
     if (!isWorker) {
@@ -184,6 +185,34 @@ export const WorkerProvider: React.FC<{ children: ReactNode }> = ({ children }) 
       setCurrentWorker(null);
       return false;
     }
+
+    // Fetch worker profile directly instead of relying on refreshWorkerFromSession
+    const { data: workerRow } = await supabase
+      .from("workers")
+      .select("id, category, rating, total_jobs, experience_years, is_verified, is_online, created_at")
+      .eq("user_id", data.user.id)
+      .maybeSingle();
+
+    if (!workerRow) {
+      await supabase.auth.signOut();
+      setCurrentWorker(null);
+      return false;
+    }
+
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("full_name, phone")
+      .eq("id", data.user.id)
+      .maybeSingle();
+
+    setCurrentWorker(
+      mapToWorker({
+        authEmail: data.user.email!,
+        fullName: profile?.full_name,
+        phone: profile?.phone,
+        workerRow: workerRow as any,
+      })
+    );
 
     return true;
   };
