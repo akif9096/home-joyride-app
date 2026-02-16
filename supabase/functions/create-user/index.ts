@@ -1,7 +1,6 @@
 import { serve } from "https://deno.land/std@0.190.0/http/server.ts";
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2.89.0";
 
-// Build CORS headers per-request so we can echo the request origin (required when credentials are used)
 const buildCorsHeaders = (origin?: string) => {
   const allowOrigin = origin || "*";
   return {
@@ -18,7 +17,6 @@ const handler = async (req: Request): Promise<Response> => {
   const corsHeaders = buildCorsHeaders(origin);
 
   if (req.method === "OPTIONS") {
-    // Reply to preflight with explicit allowed methods/headers
     return new Response(null, { status: 204, headers: corsHeaders });
   }
 
@@ -38,7 +36,7 @@ const handler = async (req: Request): Promise<Response> => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
     );
 
-    // Create user as admin and mark email confirmed
+    // Try to create the user
     const { data: createData, error: createError } = await supabase.auth.admin.createUser({
       email: normalizedEmail,
       password,
@@ -47,21 +45,82 @@ const handler = async (req: Request): Promise<Response> => {
     } as any);
 
     if (createError) {
-      console.error("createUser error:", createError);
-      const msg = String(createError.message || "Failed to create user");
-      if (/already|registered|exists/i.test(msg)) {
+      const msg = String(createError.message || "");
+      const isExisting = /already|registered|exists/i.test(msg);
+
+      if (isExisting && userType === "worker") {
+        // User exists — add worker role to existing account
+        // Look up the existing user
+        const { data: listData } = await supabase.auth.admin.listUsers();
+        const existingUser = listData?.users?.find(
+          (u: any) => u.email?.toLowerCase() === normalizedEmail
+        );
+
+        if (!existingUser) {
+          return new Response(JSON.stringify({ error: "User already exists but could not be found" }), {
+            status: 409,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        // Check if already has worker role
+        const { data: existingRoles } = await supabase
+          .from("user_roles")
+          .select("role")
+          .eq("user_id", existingUser.id)
+          .eq("role", "worker")
+          .maybeSingle();
+
+        if (existingRoles) {
+          // Already a worker, just let them log in
+          return new Response(JSON.stringify({ success: true, existing: true, message: "Account already exists as worker. Please log in." }), {
+            status: 200,
+            headers: { "Content-Type": "application/json", ...corsHeaders },
+          });
+        }
+
+        // Add worker role
+        await supabase.from("user_roles").insert({
+          user_id: existingUser.id,
+          role: "worker",
+        });
+
+        // Create worker profile if not exists
+        const { data: existingWorker } = await supabase
+          .from("workers")
+          .select("id")
+          .eq("user_id", existingUser.id)
+          .maybeSingle();
+
+        if (!existingWorker) {
+          await supabase.from("workers").insert({
+            user_id: existingUser.id,
+            category: "plumber",
+            is_verified: false,
+            is_online: false,
+          });
+        }
+
+        return new Response(JSON.stringify({ success: true, existing: true, message: "Worker role added to existing account. Please log in." }), {
+          status: 200,
+          headers: { "Content-Type": "application/json", ...corsHeaders },
+        });
+      }
+
+      if (isExisting) {
         return new Response(JSON.stringify({ error: "User already exists" }), {
           status: 409,
           headers: { "Content-Type": "application/json", ...corsHeaders },
         });
       }
+
+      console.error("createUser error:", createError);
       return new Response(JSON.stringify({ error: msg }), {
         status: 500,
         headers: { "Content-Type": "application/json", ...corsHeaders },
       });
     }
 
-    // normalize returned user object (some versions return { user } while others return user directly)
     const createdUser = (createData && ((createData as any).user ? (createData as any).user : createData)) as any;
 
     if (!createdUser || !createdUser.id) {
@@ -72,7 +131,7 @@ const handler = async (req: Request): Promise<Response> => {
       });
     }
 
-    // Insert role into user_roles table
+    // Insert role
     try {
       const { error: roleErr } = await supabase.from("user_roles").insert({
         user_id: createdUser.id,
@@ -83,7 +142,7 @@ const handler = async (req: Request): Promise<Response> => {
       console.error("role insert exception", e);
     }
 
-    // If worker, create worker profile row
+    // If worker, create worker profile
     if (userType === "worker") {
       try {
         const { error: workerErr } = await supabase.from("workers").insert({
